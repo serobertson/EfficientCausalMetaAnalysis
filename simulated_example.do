@@ -1,4 +1,5 @@
  
+ 
 
 clear all
 
@@ -6,6 +7,8 @@ clear all
 ******Start of program here*******
 program estimatorcalc_tx_constant, rclass
 args a 
+
+*local a=1 
 
 generate term1 = (S == 0) * (g_`a')
 
@@ -28,14 +31,14 @@ count if S == 0 | S==1
 	
 
 *local estimate =  `sumnum' / `S0_size'
-return local ESTIMATE_AIPW=`sumnum'/`S0_size'  /*EQUATION 10 in the draft*/
+return local ESTIMATE_AIPW=`sumnum'/`S0_size'  
 
 
 *IPW
 generate term2_mod = (S != 0) *(A==`a') * w_`a' * (Y)
 summ term2_mod
 local term2_mod=r(sum)
-return local ESTIMATE_IPW=`term2_mod'/`S0_size'  /*EQUATION 9 in the draft*/
+return local ESTIMATE_IPW=`term2_mod'/`S0_size'  
 
 *OM
 summ term1
@@ -56,11 +59,61 @@ return local ESTIMATE_AIPW2=`norm'*`term2' + `term1'/`S0_size'
 
 
 
+******************************
+*IPW alternative
+*uses  Pr[A = a | X, R = 1] = \sum_{s} Pr[A = a | X, R=1, S = s] Pr[S = s | X, R = 1]
 
+*number of trials
+summ S
+ local num_trials = r(max)
+ display `num_trials'
+ 
+*generate e_alt_a`a'= p_alt_s*e_a`a'_s
+
+*generate w_alt_`a'= ((1-p)/(p*e_alt_a`a'))
+generate w_alt_`a'= ((1-p)/(p*sum_e_a`a'_s))
+
+replace w_alt_`a'=0 if w_alt_`a'==.
+
+generate term2_alt = (S != 0) *(A==`a') * w_alt_`a' * (Y)
+summ term2_alt
+local term2_alt=r(sum)
+return local ESTIMATE_IPW_alt=`term2_alt'/`S0_size' 
+
+
+*DR
+
+generate term2_alt_for_DR = (S != 0) *(A==`a') * w_alt_`a' * (Y - g_`a')
+replace term2_alt_for_DR =0 if term2_alt_for_DR ==.
+generate summand_alt = term1 + term2_alt_for_DR
+
+summ summand_alt
+	local sumnum_alt = r(sum)
+	
+return local ESTIMATE_AIPW_alt=`sumnum_alt'/`S0_size'  
+
+***********
+*Normalized IPW
+generate normalization_alt = (S != 0) *(A==`a') * w_alt_`a' 
+	sum normalization_alt
+	local norm = 1 / r(sum) 
+return local ESTIMATE_IPW2_alt=`norm'*`term2_alt'
+
+*Normalized DR
+summ term2_alt_for_DR
+local term2_alt_for_DR=r(sum)
+return local ESTIMATE_AIPW2_alt=`norm'*`term2_alt_for_DR' + `term1'/`S0_size' 
+
+
+
+*****
+
+
+drop w_alt
 drop term*
-drop summand
+drop summand*
 drop w*
-drop normalization
+drop normalization*
 
 end
 ******End of program here*******
@@ -71,19 +124,19 @@ end
 
 set seed 12345678
 
-*local N_runs = 10000
-local N_runs = 1000
+local N_runs = 10000
+*local N_runs = 5
 
 local scenario = 0
 
-foreach total_size in  10000 /* 100000 */ {
+*run total_size separately 
+foreach total_size in  /*10000*/ 100000  {
 
 *in_trial prevalence set to 20% and 50%
 if `total_size' == 10000 {
 	local trial_size_list "1000 2000 5000"
 	}
 	
-*in_trial prevalence set to 2% and 5%
 if `total_size' == 100000 {
 	local trial_size_list "1000 2000 5000"
 	}
@@ -224,8 +277,8 @@ tempname saved_results
 
 postfile `saved_results' double(total_size trial_size S1_size S2_size S3_size scenario_trial_size scenario_treatment_prev ///
 								Y1_true Y0_true ///
-								mu1_OM mu1_IPW1 mu1_IPW2 mu1_AIPW1 mu1_AIPW2 ///
-								mu0_OM mu0_IPW1 mu0_IPW2 mu0_AIPW1 mu0_AIPW2 ///
+								mu1_OM mu1_IPW1 mu1_IPW1_alt mu1_AIPW1 mu1_AIPW1_alt mu1_IPW2  mu1_AIPW2 mu1_IPW2_alt mu1_AIPW2_alt   ///
+								mu0_OM mu0_IPW1 mu0_IPW1_alt mu0_AIPW1 mu0_AIPW1_alt mu0_IPW2 mu0_AIPW2 mu0_IPW2_alt mu0_AIPW2_alt ///
 								) using multi_sim_test_`scenario'_N_`total_size'.dta, replace 
 
 								
@@ -296,7 +349,7 @@ summ Y0
 
 *******************************
 
-*indicator for if target (S==0 , not in trials is the target*/ 
+*indicator for if target (S==0 , not in trials is the target)*/ 
 generate T=1 if S==0
 replace T=0 if S!=0
 
@@ -323,23 +376,54 @@ predict e_a1
 
 generate e_a0= 1- e_a1
 
+
+
+
+*number of trials
+summ S
+ local num_trials = r(max)
+ display `num_trials'
+ 
+ *Pr[S=s|X, IN_TRIAL=1]
+mlogit S `X' if IN_TRIAL == 1
+	predict prS1-prS`num_trials'
+	
+	
+*Pr[A = a | X, S = s]
+forvalues i= 1/3 {
+logit A `X' if IN_TRIAL==1 & S==`i'
+predict e_a1_s`i'
+generate e_a0_s`i'= 1- e_a1_s`i'
+}
+
+
+generate sum_e_a1_s= e_a1_s1*prS1  + e_a1_s2*prS2 + e_a1_s3*prS3
+generate sum_e_a0_s= e_a0_s1*prS1  + e_a0_s2*prS2 + e_a0_s3*prS3
+
+
 *save true estimates
 summ Y1 if S==0
 	local Y1_true=r(mean)
 
 summ Y0 if S==0
 	local Y0_true=r(mean)
+	
 
-*Run program with constant tx
+*Run program 
 
 estimatorcalc_tx_constant 1 
 return list 
-	local mu1_OM = r(ESTIMATE_OM) 
+    local mu1_OM = r(ESTIMATE_OM) 
 	local mu1_IPW1 = r(ESTIMATE_IPW)
 	local mu1_IPW2 = r(ESTIMATE_IPW2)
 	local mu1_AIPW1 = r(ESTIMATE_AIPW)
 	local mu1_AIPW2 = r(ESTIMATE_AIPW2)
 
+
+   local mu1_IPW1_alt=  r(ESTIMATE_IPW_alt)
+   local mu1_AIPW1_alt= r(ESTIMATE_AIPW_alt)
+   local mu1_IPW2_alt=  r(ESTIMATE_IPW2_alt)
+   local mu1_AIPW2_alt= r(ESTIMATE_AIPW2_alt)
 
 estimatorcalc_tx_constant 0
 return list 
@@ -348,13 +432,20 @@ return list
 	local mu0_IPW2 = r(ESTIMATE_IPW2)
 	local mu0_AIPW1 = r(ESTIMATE_AIPW)
 	local mu0_AIPW2 = r(ESTIMATE_AIPW2)
+	
+	local mu0_IPW1_alt= r(ESTIMATE_IPW_alt)
+	local mu0_AIPW1_alt= r(ESTIMATE_AIPW_alt)
+	local mu0_IPW2_alt=  r(ESTIMATE_IPW2_alt)
+    local mu0_AIPW2_alt= r(ESTIMATE_AIPW2_alt)
+
+
 
 
 /* store results */															
 post `saved_results' 	(`total_size') (`trial_size') (`S1_size') (`S2_size') (`S3_size') (`scenario_trial_size') (`scenario_treatment_prev') ///
 						(`Y1_true') (`Y0_true') ///
-						(`mu1_OM') (`mu1_IPW1') (`mu1_IPW2') (`mu1_AIPW1') (`mu1_AIPW2') ///
-						(`mu0_OM') (`mu0_IPW1') (`mu0_IPW2') (`mu0_AIPW1') (`mu0_AIPW2') 
+						(`mu1_OM') (`mu1_IPW1') (`mu1_IPW1_alt') (`mu1_AIPW1') (`mu1_AIPW1_alt') (`mu1_IPW2') (`mu1_AIPW2') (`mu1_IPW2_alt') (`mu1_AIPW2_alt') ///
+						(`mu0_OM') (`mu0_IPW1') (`mu0_IPW1_alt') (`mu0_AIPW1') (`mu0_AIPW1_alt') (`mu0_IPW2') (`mu0_AIPW2') (`mu0_IPW2_alt') (`mu0_AIPW2_alt') 
 } /* end of runs for a given scenario */
 postclose `saved_results'
 
