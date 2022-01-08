@@ -1,0 +1,47 @@
+#complete-case dataset for halt-c 
+
+cleaned_haltc_for_Multicenter_final <- readRDS("cleaned_haltc_for_Multicenter_final.rds")
+DF=cleaned_haltc_for_Multicenter_final
+table(DF$S) #trials numbered 1-10
+#renumber trials so 10 is target (largest center with complete data)
+DF$S<-ifelse(DF$S==10, 0, DF$S)
+table(DF$S)
+
+
+#********************************************************
+#********************************************************
+
+#Rename variables of interest:
+#rename baseline covariates
+names(DF)[-1:-4] <- paste0('X', 1:(ncol(DF)-4))
+names(cleaned_haltc_for_Multicenter_final)[-1:-4]
+#create variable
+DF$IN_TRIAL<-ifelse(DF$S!=0, 1,0) #variable called: `R' in paper
+#-------sandwich variance------#
+library("geex")
+#--------------------------------------------------------------------
+#No transportability analysis:
+#Returns unadjusted estimate and adjusted estimates from confounding from OM and IPW in the target"
+#--------------------------------------------------------------------
+source('~/0_sourcecode_no_transport.R')
+Sresults = list()
+#trial 0
+Sresults[[1]]<-no_transport_est(DF=DF,trialnum=0,
+                                str_covariates="X1+X2+X3+X4+X5+X6+X7+X8+X9+X10+X11+X12+X13+X14+X15+X16+X17+X18",
+                                keep=c("X1", "X2", "X3", "X4", "X5", "X6","X7","X8","X9","X10",
+                                       "X11", "X12", "X13", "X14", "X15", "X16", "X17","X18"))
+
+write.csv(Sresults[[1]], "tech_results_no_transport_Jan22.csv")
+
+#--------------------------------------------------------------------
+#Transporting the entire collection of trials to S=0
+#--------------------------------------------------------------------
+source('~/0_sourcecode_transport_one_trial.R')
+head(DF)
+DF$S<-ifelse(DF$S==0, 0, 1) #R
+meta<-transport_onetrial_est(DF=DF,trialnum=1,
+                             str_covariates="X1+X2+X3+X4+X5+X6+X7+X8+X9+X10+X11+X12+X13+X14+X15+X16+X17+X18",
+                             keep=c("X1", "X2", "X3", "X4", "X5", "X6","X7","X8","X9","X10",
+                                    "X11", "X12", "X13", "X14", "X15", "X16", "X17","X18"))
+
+write.csv(meta, "tech_results_transport_collection_Jan22.csv")
